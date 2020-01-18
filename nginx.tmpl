@@ -171,10 +171,9 @@ server {
 {{ $is_regexp := hasPrefix "~" $host }}
 {{ $upstream_name := when $is_regexp (sha1 $host) $host }}
 
-# {{ $host }}
-upstream {{ $upstream_name }} {
-
 {{ range $container := $containers }}
+# {{ $container.Name }}
+upstream {{ $container.Name }} {
 	{{ $addrLen := len $container.Addresses }}
 
 	{{ range $knownNetwork := $CurrentContainer.Networks }}
@@ -198,8 +197,8 @@ upstream {{ $upstream_name }} {
 			{{ end }}
 		{{ end }}
 	{{ end }}
-{{ end }}
 }
+{{ end }}
 
 {{ $default_host := or ($.Env.DEFAULT_HOST) "" }}
 {{ $default_server := index (dict $host "" $default_host "default_server") $host }}
@@ -294,16 +293,40 @@ server {
 	include /etc/nginx/vhost.d/default;
 	{{ end }}
 
-	location / {
+	{{ range $container := $containers }}
+	{{/* Determine whether this container has specified a virtual path, or default to the / pattern */}}
+	{{ $location := coalesce $container.Env.VIRTUAL_PATH "/" }}
+	{{ $is_regexp := hasPrefix "^" $location }}
+	{{ $modifier := when $is_regexp "~" "" }}
+
+	{{ if (eq $container.Env.VIRTUAL_PATH_STRIP "TRUE") }}
+	location {{ $modifier }} '{{ $location }}' {
+		return 302 '{{ $location }}/';
+	}
+	{{ end }}
+
+	{{ if (eq $container.Env.VIRTUAL_PATH_STRIP "TRUE") }}
+	location {{ $modifier }} '{{ $location }}/' {
+	{{ else }}
+	location {{ $modifier }} '{{ $location }}' {
+	{{ end }}
 		{{ if eq $proto "uwsgi" }}
 		include uwsgi_params;
-		uwsgi_pass {{ trim $proto }}://{{ trim $upstream_name }};
+		{{ if (eq $container.Env.VIRTUAL_PATH_STRIP "TRUE") }}
+		uwsgi_pass {{ trim $proto }}://{{ trim $container.Name }}/;
+		{{ else }}
+		uwsgi_pass {{ trim $proto }}://{{ trim $container.Name }};
+		{{ end }}
 		{{ else if eq $proto "fastcgi" }}
 		root   {{ trim $vhost_root }};
 		include fastcgi_params;
-		fastcgi_pass {{ trim $upstream_name }};
+		fastcgi_pass {{ trim $container.Name }};
 		{{ else }}
-		proxy_pass {{ trim $proto }}://{{ trim $upstream_name }};
+		{{ if (eq $container.Env.VIRTUAL_PATH_STRIP "TRUE") }}
+		proxy_pass {{ trim $proto }}://{{ trim $container.Name }}/;
+		{{ else }}
+		proxy_pass {{ trim $proto }}://{{ trim $container.Name }};
+		{{ end }}
 		{{ end }}
 
 		{{ if (exists (printf "/etc/nginx/htpasswd/%s" $host)) }}
@@ -316,6 +339,7 @@ server {
 		include /etc/nginx/vhost.d/default_location;
 		{{ end }}
 	}
+	{{ end }} 
 }
 
 {{ end }}
@@ -341,16 +365,41 @@ server {
 	include /etc/nginx/vhost.d/default;
 	{{ end }}
 
-	location / {
+	{{ range $container := $containers }}
+	{{/* Determine whether this container has specified a virtual path, or default to the / pattern */}}
+	{{ $location := coalesce $container.Env.VIRTUAL_PATH "/" }}
+
+	{{ $is_regexp := hasPrefix "^" $location }}
+	{{ $modifier := when $is_regexp "~" "" }}
+
+	{{ if (eq $container.Env.VIRTUAL_PATH_STRIP "TRUE") }}
+	location {{ $modifier }} '{{ $location }}' {
+		return 302 '{{ $location }}/';
+	}
+	{{ end }}
+
+	{{ if (eq $container.Env.VIRTUAL_PATH_STRIP "TRUE") }}
+	location {{ $modifier }} '{{ $location }}/' {
+	{{ else }}
+	location {{ $modifier }} '{{ $location }}' {
+	{{ end }}
 		{{ if eq $proto "uwsgi" }}
 		include uwsgi_params;
-		uwsgi_pass {{ trim $proto }}://{{ trim $upstream_name }};
+		{{ if (eq $container.Env.VIRTUAL_PATH_STRIP "TRUE") }}
+		uwsgi_pass {{ trim $proto }}://{{ trim $container.Name }}/;
+		{{ else }}
+		uwsgi_pass {{ trim $proto }}://{{ trim $container.Name }};
+		{{ end }}
 		{{ else if eq $proto "fastcgi" }}
 		root   {{ trim $vhost_root }};
 		include fastcgi_params;
-		fastcgi_pass {{ trim $upstream_name }};
+		fastcgi_pass {{ trim $container.Name }};
 		{{ else }}
-		proxy_pass {{ trim $proto }}://{{ trim $upstream_name }};
+		{{ if (eq $container.Env.VIRTUAL_PATH_STRIP "TRUE") }}
+		proxy_pass {{ trim $proto }}://{{ trim $container.Name }}/;
+		{{ else }}
+		proxy_pass {{ trim $proto }}://{{ trim $container.Name }};
+		{{ end }}
 		{{ end }}
 		{{ if (exists (printf "/etc/nginx/htpasswd/%s" $host)) }}
 		auth_basic	"Restricted {{ $host }}";
@@ -362,6 +411,8 @@ server {
 		include /etc/nginx/vhost.d/default_location;
 		{{ end }}
 	}
+
+	{{ end }}
 }
 
 {{ if (and (not $is_https) (exists "/etc/nginx/certs/default.crt") (exists "/etc/nginx/certs/default.key")) }}
